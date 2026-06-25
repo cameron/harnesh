@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SESSION="${ATY_TMUX_SESSION:-aty-smoke-$$}"
 WINDOW="${ATY_TMUX_WINDOW:-aty}"
+WINDOW_TARGET=""
 TIMEOUT_SECONDS="${ATY_TMUX_TIMEOUT:-240}"
 PROMPT="${ATY_TMUX_PROMPT:-please run ls in the shell}"
 EXPECTED_COMMAND="${ATY_TMUX_EXPECTED_COMMAND:-ls}"
@@ -11,7 +12,7 @@ EXPECTED_LINE="${ATY_TMUX_EXPECTED_LINE:-go.mod  go.sum  main.go  main_test.go  
 CLEANED_UP=0
 
 capture() {
-	tmux capture-pane -pt "$SESSION:$WINDOW" -S -500 | tr -d '\r'
+	tmux capture-pane -pt "$WINDOW_TARGET" -S -500 | tr -d '\r'
 }
 
 prompt_ready() {
@@ -46,7 +47,7 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
 	exit 2
 fi
 
-tmux new-session -d -s "$SESSION" -n "$WINDOW" "cd '$ROOT' && go run ."
+WINDOW_TARGET="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$WINDOW" "cd '$ROOT' && go run .")"
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
@@ -61,7 +62,7 @@ if ! prompt_ready; then
 	exit 1
 fi
 
-tmux send-keys -t "$SESSION:$WINDOW" "$PROMPT" Enter
+tmux send-keys -t "$WINDOW_TARGET" "$PROMPT" Enter
 
 while (( SECONDS < deadline )); do
 	output="$(capture)"
