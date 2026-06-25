@@ -15,7 +15,7 @@ func TestResolvePiCommandUsesOverride(t *testing.T) {
 	if err := os.WriteFile(fakePi, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ATY_PI_BIN", fakePi)
+	t.Setenv("HARNESH_PI_BIN", fakePi)
 
 	cmd, err := resolvePiCommand()
 	if err != nil {
@@ -35,7 +35,7 @@ func TestResolvePiCommandFallsBackToNpmExec(t *testing.T) {
 	if err := os.WriteFile(fakeNpm, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ATY_PI_BIN", "")
+	t.Setenv("HARNESH_PI_BIN", "")
 	t.Setenv("PATH", dir)
 
 	cmd, err := resolvePiCommand()
@@ -53,7 +53,7 @@ func TestResolvePiCommandFallsBackToNpmExec(t *testing.T) {
 }
 
 func TestPiArgsUseOllamaModel(t *testing.T) {
-	t.Setenv("ATY_OLLAMA_MODEL", "qwen3:4b")
+	t.Setenv("HARNESH_OLLAMA_MODEL", "qwen3:4b")
 
 	args := strings.Join(piArgs("hello"), "\n")
 	for _, want := range []string{"--no-session", "--model", "ollama/qwen3:4b", "--append-system-prompt", "-p", "hello"} {
@@ -102,7 +102,7 @@ func TestBuildDeferredShellPiPromptRequiresJSONAction(t *testing.T) {
 }
 
 func TestWriteOllamaModelsConfig(t *testing.T) {
-	t.Setenv("ATY_OLLAMA_MODEL", "qwen3:4b")
+	t.Setenv("HARNESH_OLLAMA_MODEL", "qwen3:4b")
 	path := filepath.Join(t.TempDir(), "models.json")
 
 	if err := writeOllamaModelsConfig(path, "http://127.0.0.1:12345/v1"); err != nil {
@@ -128,16 +128,16 @@ func TestWriteOllamaModelsConfig(t *testing.T) {
 }
 
 func TestForegroundShellArgsInstallFishAgentHooks(t *testing.T) {
-	args := strings.Join(foregroundShellArgs(shellFish, "/tmp/aty", "/tmp/transcript"), " ")
+	args := strings.Join(foregroundShellArgs(shellFish, "/tmp/harnesh", "/tmp/transcript"), " ")
 	for _, want := range []string{
 		"function ,",
 		"fish_command_not_found",
 		"--agent-prompt $argv",
-		"set -l __aty_cmd",
+		"set -l __harnesh_cmd",
 		"history append",
 		"fish_prompt",
 		"printf '%s",
-		"eval \"$__aty_cmd\"",
+		"eval \"$__harnesh_cmd\"",
 	} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("fish init missing %q in %q", want, args)
@@ -146,7 +146,7 @@ func TestForegroundShellArgsInstallFishAgentHooks(t *testing.T) {
 }
 
 func TestBashInitInstallsAgentHooks(t *testing.T) {
-	rc, err := writeBashInitFile("/tmp/aty", "/tmp/transcript")
+	rc, err := writeBashInitFile("/tmp/harnesh", "/tmp/transcript")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,11 +161,11 @@ func TestBashInitInstallsAgentHooks(t *testing.T) {
 		"function ,()",
 		"command_not_found_handle",
 		"--agent-prompt",
-		"__aty_cmd=$(",
+		"__harnesh_cmd=$(",
 		"history -s",
 		"${PS1@P}",
 		"printf '%s\\n'",
-		"eval \"$__aty_cmd\"",
+		"eval \"$__harnesh_cmd\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("bash init missing %q in:\n%s", want, text)
@@ -181,8 +181,8 @@ func TestRunPiPromptInvokesPiAndRecordsTranscript(t *testing.T) {
 	if err := os.WriteFile(fakePi, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ATY_PI_BIN", fakePi)
-	t.Setenv("ATY_OLLAMA_BASE_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("HARNESH_PI_BIN", fakePi)
+	t.Setenv("HARNESH_OLLAMA_BASE_URL", "http://127.0.0.1:1/v1")
 
 	tr := &transcript{}
 	tr.append("[shell] ", []byte("previous context"))
@@ -211,9 +211,9 @@ func TestRunPiPromptUsesExtensionBashWhenShellSocketIsAvailable(t *testing.T) {
 	if err := os.WriteFile(fakePi, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ATY_PI_BIN", fakePi)
-	t.Setenv("ATY_OLLAMA_BASE_URL", "http://127.0.0.1:1/v1")
-	t.Setenv("ATY_SHELL_SOCKET", filepath.Join(dir, "shell.sock"))
+	t.Setenv("HARNESH_PI_BIN", fakePi)
+	t.Setenv("HARNESH_OLLAMA_BASE_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("HARNESH_SHELL_SOCKET", filepath.Join(dir, "shell.sock"))
 
 	tr := &transcript{}
 	runPiPrompt(context.Background(), "run echo hello", tr)
@@ -223,7 +223,7 @@ func TestRunPiPromptUsesExtensionBashWhenShellSocketIsAvailable(t *testing.T) {
 		t.Fatalf("fake pi was not invoked: %v", err)
 	}
 	text := string(args)
-	for _, want := range []string{"-e\n", "aty-shell-extension.ts", "--no-builtin-tools", "--tools\nbash"} {
+	for _, want := range []string{"-e\n", "harnesh-shell-extension.ts", "--no-builtin-tools", "--tools\nbash"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("fake pi args missing %q in:\n%s", want, text)
 		}

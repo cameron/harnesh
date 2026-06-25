@@ -2,13 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SESSION="${ATY_TMUX_SESSION:-aty-smoke-$$}"
-WINDOW="${ATY_TMUX_WINDOW:-aty}"
+SESSION="${HARNESH_TMUX_SESSION:-harnesh-smoke-$$}"
+WINDOW="${HARNESH_TMUX_WINDOW:-harnesh}"
 WINDOW_TARGET=""
-TIMEOUT_SECONDS="${ATY_TMUX_TIMEOUT:-240}"
-PROMPT="${ATY_TMUX_PROMPT:-please run ls in the shell}"
-EXPECTED_COMMAND="${ATY_TMUX_EXPECTED_COMMAND:-ls}"
-EXPECTED_LINE="${ATY_TMUX_EXPECTED_LINE:-go.mod  go.sum  main.go  main_test.go  PI_PROTOTYPE.md  SPEC.md  test}"
+TIMEOUT_SECONDS="${HARNESH_TMUX_TIMEOUT:-240}"
+PROMPT="${HARNESH_TMUX_PROMPT:-please run ls in the shell}"
+EXPECTED_COMMAND="${HARNESH_TMUX_EXPECTED_COMMAND:-ls}"
+EXPECTED_LINE="${HARNESH_TMUX_EXPECTED_LINE:-go.mod  go.sum  main.go  main_test.go  PI_PROTOTYPE.md  SPEC.md  test}"
 CLEANED_UP=0
 
 capture() {
@@ -26,7 +26,7 @@ cleanup() {
 		exit "$status"
 	fi
 	CLEANED_UP=1
-	if [[ "${ATY_KEEP_TMUX:-}" == "1" ]]; then
+	if [[ "${HARNESH_KEEP_TMUX:-}" == "1" ]]; then
 		echo "tmux session left running: $SESSION" >&2
 		exit "$status"
 	fi
@@ -57,7 +57,7 @@ while (( SECONDS < deadline )); do
 	sleep 1
 done
 if ! prompt_ready; then
-	echo "e2e: timed out waiting for aty shell prompt" >&2
+	echo "e2e: timed out waiting for harnesh shell prompt" >&2
 	capture >&2
 	exit 1
 fi
@@ -71,8 +71,8 @@ while (( SECONDS < deadline )); do
 		echo "e2e: ok"
 		exit 0
 	fi
-	if printf '%s\n' "$output" | grep -q 'aty:'; then
-		echo "e2e: aty reported an error before expected output" >&2
+	if printf '%s\n' "$output" | grep -q 'harnesh:'; then
+		echo "e2e: harnesh reported an error before expected output" >&2
 		printf '%s\n' "$output" >&2
 		exit 1
 	fi

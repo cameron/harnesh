@@ -1,43 +1,43 @@
-# Pi-backed aty prototype
+# Pi-backed harnesh prototype
 
 ## Long-term vision
 
-aty should be a PTY-first hybrid terminal and agent harness. The durable shape is: aty owns input routing, transcript projection, and the user-facing terminal experience; a real `$SHELL` owns shell semantics; Pi owns the agent runtime, model/provider handling, skills, tools, session state, and compaction.
+harnesh should be a PTY-first hybrid terminal and agent harness. The durable shape is: harnesh owns input routing, transcript projection, and the user-facing terminal experience; a real `$SHELL` owns shell semantics; Pi owns the agent runtime, model/provider handling, skills, tools, session state, and compaction.
 
 The long-term invariant is that agent-initiated shell commands and user-initiated shell commands must execute through the same persistent PTY-backed shell session. That is what keeps cwd, aliases, functions, history, job control, and visible transcript from splitting into separate realities.
 
-aty should not implement a shell. It should manage a real shell process under a PTY and decide when completed user input is prose for the agent versus bytes/commands for that shell. The eventual Pi integration should embed Pi or use its SDK-level seams, replacing Pi's bash execution with an aty PTY-backed operation.
+harnesh should not implement a shell. It should manage a real shell process under a PTY and decide when completed user input is prose for the agent versus bytes/commands for that shell. The eventual Pi integration should embed Pi or use its SDK-level seams, replacing Pi's bash execution with an harnesh PTY-backed operation.
 
 ## Prototype goal
 
 This prototype validates the mixed shell/prose prompt loop before building the full embedded-Pi shared-PTY integration.
 
-For now, aty runs the user's real interactive shell in the foreground PTY and preserves the shell's own line editor, history, completion, prompt, aliases, and keybindings. Prose prompts are invoked through a shell function named `,`, which calls back into aty and runs `pi -p`. The prototype includes recent terminal transcript text in each Pi invocation so the shell session can act like rough prompt context.
+For now, harnesh runs the user's real interactive shell in the foreground PTY and preserves the shell's own line editor, history, completion, prompt, aliases, and keybindings. Prose prompts are invoked through a shell function named `,`, which calls back into harnesh and runs `pi -p`. The prototype includes recent terminal transcript text in each Pi invocation so the shell session can act like rough prompt context.
 
 ## Current behavior
 
 - Shell commands are typed directly into the real shell prompt.
 - `, prompt` invokes `pi -p` with `prompt` plus recent terminal context.
-- If `pi` is not on `PATH`, aty falls back to `npm exec --yes --package @earendil-works/pi-coding-agent -- pi`.
+- If `pi` is not on `PATH`, harnesh falls back to `npm exec --yes --package @earendil-works/pi-coding-agent -- pi`.
 - Pi is configured per prompt with a temporary `models.json` for an OpenAI-compatible Ollama provider.
-- By default, aty uses `gemma4:12b` from Ollama on `r720`. Override with `ATY_OLLAMA_MODEL`.
-- If local Ollama is unavailable, aty opens an SSH tunnel to `r720:11434` instead of exposing Ollama on the LAN. Override the SSH host with `ATY_OLLAMA_SSH_HOST` or bypass tunneling with `ATY_OLLAMA_BASE_URL`.
+- By default, harnesh uses `gemma4:12b` from Ollama on `r720`. Override with `HARNESH_OLLAMA_MODEL`.
+- If local Ollama is unavailable, harnesh opens an SSH tunnel to `r720:11434` instead of exposing Ollama on the LAN. Override the SSH host with `HARNESH_OLLAMA_SSH_HOST` or bypass tunneling with `HARNESH_OLLAMA_BASE_URL`.
 - Bare input whose command head is not found is routed to the agent through shell command-not-found hooks. Type `exit` to stop the prototype.
 - Recent shell/user/agent output is kept in a bounded in-memory transcript.
 
 ## Verification
 
-Run `test/e2e.sh` for an end-to-end check that starts aty in a detached tmux session, sends a bare prose prompt through the shell command-not-found path, and waits for `ls` plus its output from the shared shell PTY. Set `ATY_KEEP_TMUX=1` to leave the tmux session open on exit, or `ATY_TMUX_TIMEOUT=<seconds>` to adjust the wait.
+Run `test/e2e.sh` for an end-to-end check that starts harnesh in a detached tmux session, sends a bare prose prompt through the shell command-not-found path, and waits for `ls` plus its output from the shared shell PTY. Set `HARNESH_KEEP_TMUX=1` to leave the tmux session open on exit, or `HARNESH_TMUX_TIMEOUT=<seconds>` to adjust the wait.
 
 ## Known limits
 
-- Pi tool execution through local Ollama may arrive as a text-form `bash` action instead of a native Pi tool call; aty bridges that prototype format into the shared shell socket.
+- Pi tool execution through local Ollama may arrive as a text-form `bash` action instead of a native Pi tool call; harnesh bridges that prototype format into the shared shell socket.
 - Agent commands are written into the persistent shell PTY, but shell history behavior is still whatever the foreground shell records for programmatic PTY input.
-- Prose prompts use the local Ollama provider config generated by aty, so no cloud provider key is required for the prototype.
+- Prose prompts use the local Ollama provider config generated by harnesh, so no cloud provider key is required for the prototype.
 - Context is plain transcript text, not a structured shared agent session.
 - Bare prose that starts with a real command name still runs as shell. Examples like `make it faster` need preexec/binding-level classification; use `, make it faster` for now.
-- Full-screen programs are passed through as PTY bytes, but aty does not yet understand foreground process state or semantic command boundaries.
+- Full-screen programs are passed through as PTY bytes, but harnesh does not yet understand foreground process state or semantic command boundaries.
 
 ## Next milestone
 
-Replace the `pi -p` subprocess adapter with embedded Pi runtime usage. Register a Pi bash tool whose execution writes commands to the same aty PTY shell, waits for OSC 133 or a sentinel exit marker, captures output, and returns that result to Pi. That milestone is where the agent starts sharing the user's actual shell state.
+Replace the `pi -p` subprocess adapter with embedded Pi runtime usage. Register a Pi bash tool whose execution writes commands to the same harnesh PTY shell, waits for OSC 133 or a sentinel exit marker, captures output, and returns that result to Pi. That milestone is where the agent starts sharing the user's actual shell state.

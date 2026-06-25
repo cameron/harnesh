@@ -126,7 +126,7 @@ func startShell(tr *transcript) (*shellSession, *exec.Cmd, error) {
 	cmd := exec.Command(shell, shellArgs(kind)...)
 	cmd.Env = append(os.Environ(),
 		"TERM=dumb",
-		"ATY=1",
+		"HARNESH=1",
 		"PS1=",
 		"PROMPT_COMMAND=",
 	)
@@ -168,9 +168,9 @@ func disableEcho(tty *os.File) error {
 func shellArgs(kind shellKind) []string {
 	switch kind {
 	case shellFish:
-		return []string{"--no-config", "--private", "-c", "while read --null __aty_cmd; eval $__aty_cmd; end"}
+		return []string{"--no-config", "--private", "-c", "while read --null __harnesh_cmd; eval $__harnesh_cmd; end"}
 	default:
-		return []string{"-c", "while IFS= read -r __aty_cmd; do eval \"$__aty_cmd\"; done"}
+		return []string{"-c", "while IFS= read -r __harnesh_cmd; do eval \"$__harnesh_cmd\"; done"}
 	}
 }
 
@@ -196,7 +196,7 @@ func (s *shellSession) readLoop() {
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				fmt.Fprintf(os.Stderr, "\n[aty: shell PTY read error: %v]\n", err)
+				fmt.Fprintf(os.Stderr, "\n[harnesh: shell PTY read error: %v]\n", err)
 			}
 			return
 		}
@@ -318,7 +318,7 @@ func (s *shellSession) execForAgent(command string) shellExecResponse {
 
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	capture := &shellCapture{
-		marker: "__ATY_AGENT_STATUS_" + id + "__",
+		marker: "__HARNESH_AGENT_STATUS_" + id + "__",
 		done:   make(chan shellExecResponse, 1),
 	}
 
@@ -347,7 +347,7 @@ func (s *shellSession) execForAgent(command string) shellExecResponse {
 }
 
 func (s *shellSession) execInternal(command string) {
-	sentinel := fmt.Sprintf("__ATY_STATUS_%d__", time.Now().UnixNano())
+	sentinel := fmt.Sprintf("__HARNESH_STATUS_%d__", time.Now().UnixNano())
 	done := make(chan struct{})
 
 	s.mu.Lock()
@@ -357,7 +357,7 @@ func (s *shellSession) execInternal(command string) {
 	compound := command + s.commandTerminator() + s.statusCommand(sentinel) + s.commandTerminator()
 	_, err := s.ptmx.Write([]byte(compound))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[aty: failed to write to shell PTY: %v]\n", err)
+		fmt.Fprintf(os.Stderr, "[harnesh: failed to write to shell PTY: %v]\n", err)
 		return
 	}
 
@@ -395,14 +395,14 @@ func runPiPromptForShell(ctx context.Context, prompt string, tr *transcript) piP
 func runPiPromptInternal(ctx context.Context, prompt string, tr *transcript, deferShellCommand bool) piPromptResult {
 	piCmd, err := resolvePiCommand()
 	if err != nil {
-		msg := fmt.Sprintf("[aty: %s]\n", err)
+		msg := fmt.Sprintf("[harnesh: %s]\n", err)
 		fmt.Fprint(os.Stderr, msg)
 		tr.append("[agent error] ", []byte(msg))
 		return piPromptResult{}
 	}
 	piEnv, cleanup, err := preparePiOllamaEnv(ctx, !deferShellCommand)
 	if err != nil {
-		msg := fmt.Sprintf("[aty: %s]\n", err)
+		msg := fmt.Sprintf("[harnesh: %s]\n", err)
 		fmt.Fprint(os.Stderr, msg)
 		tr.append("[agent error] ", []byte(msg))
 		return piPromptResult{}
@@ -416,26 +416,26 @@ func runPiPromptInternal(ctx context.Context, prompt string, tr *transcript, def
 	tr.append("[user prompt] ", []byte(prompt))
 
 	args := append([]string{}, piCmd.args...)
-	if extensionPath := envValue(piEnv, "ATY_PI_EXTENSION"); extensionPath != "" {
+	if extensionPath := envValue(piEnv, "HARNESH_PI_EXTENSION"); extensionPath != "" {
 		args = append(args, "-e", extensionPath, "--no-builtin-tools", "--tools", "bash")
 	}
 	args = append(args, piArgs(fullPrompt)...)
 	cmd := exec.CommandContext(ctx, piCmd.name, args...)
 	cmd.Env = append(os.Environ(), piEnv...)
-	shellSocketPath := envValue(piEnv, "ATY_SHELL_SOCKET")
+	shellSocketPath := envValue(piEnv, "HARNESH_SHELL_SOCKET")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[aty: failed to open pi stdout: %v]\n", err)
+		fmt.Fprintf(os.Stderr, "[harnesh: failed to open pi stdout: %v]\n", err)
 		return piPromptResult{}
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[aty: failed to open pi stderr: %v]\n", err)
+		fmt.Fprintf(os.Stderr, "[harnesh: failed to open pi stderr: %v]\n", err)
 		return piPromptResult{}
 	}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "[aty: failed to start pi -p: %v]\n", err)
+		fmt.Fprintf(os.Stderr, "[harnesh: failed to start pi -p: %v]\n", err)
 		return piPromptResult{}
 	}
 
@@ -453,7 +453,7 @@ func runPiPromptInternal(ctx context.Context, prompt string, tr *transcript, def
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "\n[aty: pi -p exited with error: %v]\n", err)
+		fmt.Fprintf(os.Stderr, "\n[harnesh: pi -p exited with error: %v]\n", err)
 	}
 
 	if !bufferStdout {
@@ -467,13 +467,13 @@ func runPiPromptInternal(ctx context.Context, prompt string, tr *transcript, def
 		}
 		resp, err := executeViaShellSocket(shellSocketPath, command)
 		if err != nil {
-			msg := fmt.Sprintf("[aty: failed to execute agent shell command: %v]\n", err)
+			msg := fmt.Sprintf("[harnesh: failed to execute agent shell command: %v]\n", err)
 			fmt.Fprint(os.Stderr, msg)
 			tr.append("[agent error] ", []byte(msg))
 			return piPromptResult{}
 		}
 		if resp.Error != "" {
-			msg := fmt.Sprintf("[aty: agent shell command failed: %s]\n", resp.Error)
+			msg := fmt.Sprintf("[harnesh: agent shell command failed: %s]\n", resp.Error)
 			fmt.Fprint(os.Stderr, msg)
 			tr.append("[agent error] ", []byte(msg))
 		}
@@ -487,25 +487,25 @@ func runPiPromptInternal(ctx context.Context, prompt string, tr *transcript, def
 }
 
 func piArgs(prompt string) []string {
-	model := envOrDefault("ATY_OLLAMA_MODEL", defaultOllamaModel)
+	model := envOrDefault("HARNESH_OLLAMA_MODEL", defaultOllamaModel)
 	return []string{
 		"--no-session",
 		"--model", "ollama/" + model,
-		"--append-system-prompt", atySystemPrompt(),
+		"--append-system-prompt", harneshSystemPrompt(),
 		"-p", prompt,
 	}
 }
 
-func atySystemPrompt() string {
-	return strings.TrimSpace(`You are running inside aty, a hybrid shell/agent terminal prototype.
+func harneshSystemPrompt() string {
+	return strings.TrimSpace(`You are running inside harnesh, a hybrid shell/agent terminal prototype.
 
 When a user asks you to run, check, inspect, execute, list, print, change directories, set variables, define aliases, or otherwise perform a shell operation, use the bash tool.
 
-In aty, the bash tool is not an isolated subprocess. It sends commands to the same persistent PTY-backed shell session that the user is interacting with. Commands and output are visible in the terminal transcript, and shell state such as cwd, variables, aliases, and functions belongs to that shared session.
+In harnesh, the bash tool is not an isolated subprocess. It sends commands to the same persistent PTY-backed shell session that the user is interacting with. Commands and output are visible in the terminal transcript, and shell state such as cwd, variables, aliases, and functions belongs to that shared session.
 
 If native tool calls are unavailable and you need to run a shell command, emit only this JSON shape and no prose: {"action":"bash","action_input":"command to run"}.
 
-Do not say a shell command was run unless you used the bash tool or emitted the JSON action for aty to run it.`)
+Do not say a shell command was run unless you used the bash tool or emitted the JSON action for harnesh to run it.`)
 }
 
 type piCommand struct {
@@ -514,9 +514,9 @@ type piCommand struct {
 }
 
 func resolvePiCommand() (piCommand, error) {
-	if override := os.Getenv("ATY_PI_BIN"); override != "" {
+	if override := os.Getenv("HARNESH_PI_BIN"); override != "" {
 		if _, err := os.Stat(override); err != nil {
-			return piCommand{}, fmt.Errorf("ATY_PI_BIN is set but not executable: %s", override)
+			return piCommand{}, fmt.Errorf("HARNESH_PI_BIN is set but not executable: %s", override)
 		}
 		return piCommand{name: override}, nil
 	}
@@ -536,7 +536,7 @@ func resolvePiCommand() (piCommand, error) {
 }
 
 func preparePiOllamaEnv(ctx context.Context, enableShellExtension bool) ([]string, func(), error) {
-	baseURL := os.Getenv("ATY_OLLAMA_BASE_URL")
+	baseURL := os.Getenv("HARNESH_OLLAMA_BASE_URL")
 	var cleanup func()
 	if baseURL == "" {
 		url, tunnelCleanup, err := ensureOllamaBaseURL(ctx)
@@ -549,7 +549,7 @@ func preparePiOllamaEnv(ctx context.Context, enableShellExtension bool) ([]strin
 		cleanup = func() {}
 	}
 
-	configDir, err := os.MkdirTemp("", "aty-pi-")
+	configDir, err := os.MkdirTemp("", "harnesh-pi-")
 	if err != nil {
 		cleanup()
 		return nil, func() {}, fmt.Errorf("failed to create Pi config dir: %w", err)
@@ -561,12 +561,12 @@ func preparePiOllamaEnv(ctx context.Context, enableShellExtension bool) ([]strin
 		_ = os.RemoveAll(configDir)
 		return nil, func() {}, err
 	}
-	extensionPath := filepath.Join(configDir, "aty-shell-extension.ts")
-	if socketPath := os.Getenv("ATY_SHELL_SOCKET"); enableShellExtension && socketPath != "" {
-		if err := writeAtyShellExtension(extensionPath, socketPath); err != nil {
+	extensionPath := filepath.Join(configDir, "harnesh-shell-extension.ts")
+	if socketPath := os.Getenv("HARNESH_SHELL_SOCKET"); enableShellExtension && socketPath != "" {
+		if err := writeHarneshShellExtension(extensionPath, socketPath); err != nil {
 			cleanup()
 			_ = os.RemoveAll(configDir)
-			return nil, func() {}, fmt.Errorf("failed to write aty shell Pi extension: %w", err)
+			return nil, func() {}, fmt.Errorf("failed to write harnesh shell Pi extension: %w", err)
 		}
 	}
 
@@ -574,8 +574,8 @@ func preparePiOllamaEnv(ctx context.Context, enableShellExtension bool) ([]strin
 		"PI_CODING_AGENT_DIR=" + configDir,
 		"PI_CODING_AGENT_SESSION_DIR=" + filepath.Join(configDir, "sessions"),
 	}
-	if socketPath := os.Getenv("ATY_SHELL_SOCKET"); enableShellExtension && socketPath != "" {
-		env = append(env, "ATY_PI_EXTENSION="+extensionPath, "ATY_SHELL_SOCKET="+socketPath)
+	if socketPath := os.Getenv("HARNESH_SHELL_SOCKET"); enableShellExtension && socketPath != "" {
+		env = append(env, "HARNESH_PI_EXTENSION="+extensionPath, "HARNESH_SHELL_SOCKET="+socketPath)
 	}
 	return env, func() {
 		cleanup()
@@ -583,7 +583,7 @@ func preparePiOllamaEnv(ctx context.Context, enableShellExtension bool) ([]strin
 	}, nil
 }
 
-func writeAtyShellExtension(path, socketPath string) error {
+func writeHarneshShellExtension(path, socketPath string) error {
 	source := `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import net from "node:net";
@@ -591,9 +591,9 @@ import net from "node:net";
 type ShellResponse = { output: string; exitCode: number; error?: string };
 
 function runSharedShell(command: string): Promise<ShellResponse> {
-  const socketPath = process.env.ATY_SHELL_SOCKET;
+  const socketPath = process.env.HARNESH_SHELL_SOCKET;
   if (!socketPath) {
-    return Promise.resolve({ output: "", exitCode: 1, error: "ATY_SHELL_SOCKET is not set" });
+    return Promise.resolve({ output: "", exitCode: 1, error: "HARNESH_SHELL_SOCKET is not set" });
   }
   return new Promise((resolve) => {
     const socket = net.createConnection(socketPath);
@@ -609,7 +609,7 @@ function runSharedShell(command: string): Promise<ShellResponse> {
       resolve({ output: "", exitCode: 1, error: err.message });
     });
     socket.on("close", () => {
-      if (!data.trim()) return resolve({ output: "", exitCode: 1, error: "empty response from aty shell socket" });
+      if (!data.trim()) return resolve({ output: "", exitCode: 1, error: "empty response from harnesh shell socket" });
       try {
         resolve(JSON.parse(data) as ShellResponse);
       } catch (err) {
@@ -624,14 +624,14 @@ export default function (pi: ExtensionAPI) {
     name: "bash",
     label: "bash",
     description: "Execute a shell command in the same persistent shell session the user is interacting with. Returns stdout and stderr.",
-    promptSnippet: "Execute shell commands in the user's shared aty shell session.",
+    promptSnippet: "Execute shell commands in the user's shared harnesh shell session.",
     promptGuidelines: [
       "Use bash for shell commands that should share state with the user's terminal session.",
-      "The bash tool runs in the user's visible aty shell; commands and output appear in the terminal transcript."
+      "The bash tool runs in the user's visible harnesh shell; commands and output appear in the terminal transcript."
     ],
     parameters: Type.Object({
       command: Type.String({ description: "Shell command to execute" }),
-      timeout: Type.Optional(Type.Number({ description: "Ignored by aty prototype" })),
+      timeout: Type.Optional(Type.Number({ description: "Ignored by harnesh prototype" })),
     }),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
@@ -650,10 +650,10 @@ export default function (pi: ExtensionAPI) {
 
 func startShellExecServer(shell *shellSession) (string, func(), error) {
 	dir := ""
-	socketPath := os.Getenv("ATY_SHELL_SOCKET_PATH")
+	socketPath := os.Getenv("HARNESH_SHELL_SOCKET_PATH")
 	if socketPath == "" {
 		var err error
-		dir, err = os.MkdirTemp("", "aty-shell-")
+		dir, err = os.MkdirTemp("", "harnesh-shell-")
 		if err != nil {
 			return "", func() {}, err
 		}
@@ -694,7 +694,7 @@ func startShellExecServer(shell *shellSession) (string, func(), error) {
 }
 
 func startPromptServer(tr *transcript) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "aty-prompt-")
+	dir, err := os.MkdirTemp("", "harnesh-prompt-")
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -718,14 +718,14 @@ func startPromptServer(tr *transcript) (string, func(), error) {
 				defer conn.Close()
 				var req promptRequest
 				if err := json.NewDecoder(conn).Decode(&req); err != nil {
-					fmt.Fprintf(os.Stderr, "\naty: failed to read prompt request: %v\n", err)
+					fmt.Fprintf(os.Stderr, "\nharnesh: failed to read prompt request: %v\n", err)
 					return
 				}
 				runMu.Lock()
 				defer runMu.Unlock()
 				result := runPiPromptForShell(context.Background(), req.Prompt, tr)
 				if err := json.NewEncoder(conn).Encode(promptResponse{Command: result.Command}); err != nil {
-					fmt.Fprintf(os.Stderr, "\naty: failed to write prompt response: %v\n", err)
+					fmt.Fprintf(os.Stderr, "\nharnesh: failed to write prompt response: %v\n", err)
 				}
 			}()
 		}
@@ -766,7 +766,7 @@ func ensureOllamaBaseURL(ctx context.Context) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("failed to allocate local Ollama tunnel port: %w", err)
 	}
 
-	host := envOrDefault("ATY_OLLAMA_SSH_HOST", defaultOllamaHost)
+	host := envOrDefault("HARNESH_OLLAMA_SSH_HOST", defaultOllamaHost)
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		return "", func() {}, fmt.Errorf("ssh is required to reach Ollama on %s", host)
@@ -839,7 +839,7 @@ func freeLocalPort() (int, error) {
 }
 
 func writeOllamaModelsConfig(path, baseURL string) error {
-	model := envOrDefault("ATY_OLLAMA_MODEL", defaultOllamaModel)
+	model := envOrDefault("HARNESH_OLLAMA_MODEL", defaultOllamaModel)
 	config := map[string]any{
 		"providers": map[string]any{
 			"ollama": map[string]any{
@@ -909,9 +909,9 @@ func streamPipe(wg *sync.WaitGroup, r io.Reader, w io.Writer, label string, tr *
 }
 
 func buildPiPrompt(userPrompt, recent string) string {
-	return strings.TrimSpace(fmt.Sprintf(`You are being invoked from aty, a prototype hybrid shell/agent terminal.
+	return strings.TrimSpace(fmt.Sprintf(`You are being invoked from harnesh, a prototype hybrid shell/agent terminal.
 
-The recent terminal context below is plain transcript text. If you need to run a shell command, use the bash tool. In aty, that tool sends the command to the same persistent shell session shown in the transcript.
+The recent terminal context below is plain transcript text. If you need to run a shell command, use the bash tool. In harnesh, that tool sends the command to the same persistent shell session shown in the transcript.
 
 Recent terminal context:
 %s
@@ -921,14 +921,14 @@ User request:
 }
 
 func buildDeferredShellPiPrompt(userPrompt, recent string) string {
-	return strings.TrimSpace(fmt.Sprintf(`You are being invoked from aty, a prototype hybrid shell/agent terminal.
+	return strings.TrimSpace(fmt.Sprintf(`You are being invoked from harnesh, a prototype hybrid shell/agent terminal.
 
-Your stdout is being parsed by aty. In this invocation, native tool calls are not available.
+Your stdout is being parsed by harnesh. In this invocation, native tool calls are not available.
 
 If the user's request should run, inspect, list, print, check, execute, or otherwise use a shell command, respond with exactly one JSON object and no markdown, no code fence, and no explanatory prose:
 {"action":"bash","action_input":"command to run"}
 
-Use the shortest shell command that satisfies the request. Do not claim you ran a command in prose. Do not include command output; aty will run the command in the user's real shell after your JSON response.
+Use the shortest shell command that satisfies the request. Do not claim you ran a command in prose. Do not include command output; harnesh will run the command in the user's real shell after your JSON response.
 
 If no shell command is appropriate, answer normally.
 
@@ -1035,10 +1035,10 @@ func runAgentPromptFromShell(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: , <prompt>")
 		return 2
 	}
-	if socketPath := os.Getenv("ATY_PROMPT_SOCKET"); socketPath != "" {
+	if socketPath := os.Getenv("HARNESH_PROMPT_SOCKET"); socketPath != "" {
 		command, err := sendPromptToParent(socketPath, prompt)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "aty: failed to send prompt to parent: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harnesh: failed to send prompt to parent: %v\n", err)
 			return 1
 		}
 		if command != "" {
@@ -1047,7 +1047,7 @@ func runAgentPromptFromShell(args []string) int {
 		return 0
 	}
 	tr := &transcript{}
-	if path := os.Getenv("ATY_TRANSCRIPT_FILE"); path != "" {
+	if path := os.Getenv("HARNESH_TRANSCRIPT_FILE"); path != "" {
 		if data, err := os.ReadFile(path); err == nil {
 			tr.append("", data)
 		}
@@ -1144,11 +1144,11 @@ func startForegroundShell(tr *transcript, transcriptPath, shellSocketPath, promp
 
 	cmd := exec.Command(shell, foregroundShellArgs(kind, exe, transcriptPath)...)
 	cmd.Env = append(os.Environ(),
-		"ATY=1",
-		"ATY_BIN="+exe,
-		"ATY_TRANSCRIPT_FILE="+transcriptPath,
-		"ATY_SHELL_SOCKET="+shellSocketPath,
-		"ATY_PROMPT_SOCKET="+promptSocketPath,
+		"HARNESH=1",
+		"HARNESH_BIN="+exe,
+		"HARNESH_TRANSCRIPT_FILE="+transcriptPath,
+		"HARNESH_SHELL_SOCKET="+shellSocketPath,
+		"HARNESH_PROMPT_SOCKET="+promptSocketPath,
 	)
 
 	ptmx, err := pty.Start(cmd)
@@ -1162,14 +1162,14 @@ func startForegroundShell(tr *transcript, transcriptPath, shellSocketPath, promp
 func foregroundShellArgs(kind shellKind, exe, transcriptPath string) []string {
 	switch kind {
 	case shellFish:
-		agentCall := "ATY_TRANSCRIPT_FILE=" + fishQuote(transcriptPath) + " " + fishQuote(exe) + " --agent-prompt"
+		agentCall := "HARNESH_TRANSCRIPT_FILE=" + fishQuote(transcriptPath) + " " + fishQuote(exe) + " --agent-prompt"
 		init := "function ,; " +
-			"set -l __aty_cmd (" + agentCall + " $argv); " +
-			"if test -n \"$__aty_cmd\"; history append -- \"$__aty_cmd\"; fish_prompt; printf '%s\n' \"$__aty_cmd\"; eval \"$__aty_cmd\"; end; " +
+			"set -l __harnesh_cmd (" + agentCall + " $argv); " +
+			"if test -n \"$__harnesh_cmd\"; history append -- \"$__harnesh_cmd\"; fish_prompt; printf '%s\n' \"$__harnesh_cmd\"; eval \"$__harnesh_cmd\"; end; " +
 			"end; " +
 			"function fish_command_not_found --on-event fish_command_not_found; " +
-			"set -l __aty_cmd (" + agentCall + " $argv); " +
-			"if test -n \"$__aty_cmd\"; history append -- \"$__aty_cmd\"; fish_prompt; printf '%s\n' \"$__aty_cmd\"; eval \"$__aty_cmd\"; end; " +
+			"set -l __harnesh_cmd (" + agentCall + " $argv); " +
+			"if test -n \"$__harnesh_cmd\"; history append -- \"$__harnesh_cmd\"; fish_prompt; printf '%s\n' \"$__harnesh_cmd\"; eval \"$__harnesh_cmd\"; end; " +
 			"end"
 		return []string{"-C", init}
 	default:
@@ -1182,7 +1182,7 @@ func foregroundShellArgs(kind shellKind, exe, transcriptPath string) []string {
 }
 
 func writeBashInitFile(exe, transcriptPath string) (string, error) {
-	file, err := os.CreateTemp("", "aty-bashrc-")
+	file, err := os.CreateTemp("", "harnesh-bashrc-")
 	if err != nil {
 		return "", err
 	}
@@ -1191,8 +1191,8 @@ func writeBashInitFile(exe, transcriptPath string) (string, error) {
 	if home != "" {
 		fmt.Fprintf(file, "test -f %s && source %s\n", shellQuote(filepath.Join(home, ".bashrc")), shellQuote(filepath.Join(home, ".bashrc")))
 	}
-	fmt.Fprintf(file, "function ,(){ local __aty_cmd; __aty_cmd=$(ATY_TRANSCRIPT_FILE=%s %s --agent-prompt \"$*\"); if [ -n \"$__aty_cmd\" ]; then history -s \"$__aty_cmd\"; printf '%%s' \"${PS1@P}\"; printf '%%s\\n' \"$__aty_cmd\"; eval \"$__aty_cmd\"; fi; }\n", shellQuote(transcriptPath), shellQuote(exe))
-	fmt.Fprintf(file, "function command_not_found_handle(){ local __aty_cmd; __aty_cmd=$(ATY_TRANSCRIPT_FILE=%s %s --agent-prompt \"$*\"); if [ -n \"$__aty_cmd\" ]; then history -s \"$__aty_cmd\"; printf '%%s' \"${PS1@P}\"; printf '%%s\\n' \"$__aty_cmd\"; eval \"$__aty_cmd\"; fi; }\n", shellQuote(transcriptPath), shellQuote(exe))
+	fmt.Fprintf(file, "function ,(){ local __harnesh_cmd; __harnesh_cmd=$(HARNESH_TRANSCRIPT_FILE=%s %s --agent-prompt \"$*\"); if [ -n \"$__harnesh_cmd\" ]; then history -s \"$__harnesh_cmd\"; printf '%%s' \"${PS1@P}\"; printf '%%s\\n' \"$__harnesh_cmd\"; eval \"$__harnesh_cmd\"; fi; }\n", shellQuote(transcriptPath), shellQuote(exe))
+	fmt.Fprintf(file, "function command_not_found_handle(){ local __harnesh_cmd; __harnesh_cmd=$(HARNESH_TRANSCRIPT_FILE=%s %s --agent-prompt \"$*\"); if [ -n \"$__harnesh_cmd\" ]; then history -s \"$__harnesh_cmd\"; printf '%%s' \"${PS1@P}\"; printf '%%s\\n' \"$__harnesh_cmd\"; eval \"$__harnesh_cmd\"; fi; }\n", shellQuote(transcriptPath), shellQuote(exe))
 	return file.Name(), nil
 }
 
@@ -1226,7 +1226,7 @@ func makeRaw(fd int) (func(), error) {
 }
 
 func runForegroundShell() error {
-	transcriptFile, err := os.CreateTemp("", "aty-transcript-")
+	transcriptFile, err := os.CreateTemp("", "harnesh-transcript-")
 	if err != nil {
 		return err
 	}
@@ -1240,7 +1240,7 @@ func runForegroundShell() error {
 		return err
 	}
 	defer cleanupSocket()
-	restoreShellSocketEnv := setenvForProcess("ATY_SHELL_SOCKET", socketPath)
+	restoreShellSocketEnv := setenvForProcess("HARNESH_SHELL_SOCKET", socketPath)
 	defer restoreShellSocketEnv()
 	promptSocketPath, cleanupPromptSocket, err := startPromptServer(tr)
 	if err != nil {
@@ -1302,7 +1302,7 @@ func main() {
 	}
 
 	if err := runForegroundShell(); err != nil {
-		fmt.Fprintf(os.Stderr, "aty: %v\n", err)
+		fmt.Fprintf(os.Stderr, "harnesh: %v\n", err)
 		os.Exit(1)
 	}
 }
