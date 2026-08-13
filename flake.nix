@@ -1,5 +1,5 @@
 {
-  description = "Persistent PTY shell with Codex agent dispatch";
+  description = "Persistent PTY shell with configured agent dispatch";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -16,7 +16,7 @@
         {
           default = pkgs.buildGoModule {
             pname = "harnesh";
-            version = "0-unstable-2026-08-12";
+            version = "0-unstable-2026-08-13";
             src = ./.;
 
             vendorHash = "sha256-ciGayPKX2j48v7nO6TUUCqynF6Q7vHMdnVgz3ZW8bo8=";
@@ -31,7 +31,7 @@
             '';
 
             meta = {
-              description = "Persistent PTY shell with Codex agent dispatch";
+              description = "Persistent PTY shell with configured agent dispatch";
               homepage = "https://github.com/cameron/harnesh";
               mainProgram = "harnesh";
               platforms = nixpkgs.lib.platforms.linux;

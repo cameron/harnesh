@@ -75,7 +75,7 @@ func TestPromptMarkerExcludesCommandFromAgentContext(t *testing.T) {
 	if len(events) != 1 || events[0].Origin != "prompt" {
 		t.Fatalf("prompt event = %#v", events)
 	}
-	batch, err := j.buildBatch("codex")
+	batch, err := j.buildBatch("agent")
 	if err != nil {
 		t.Fatal(err)
 	}

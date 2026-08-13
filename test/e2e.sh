@@ -59,15 +59,6 @@ cat > "$fake_agent" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-response=
-previous=
-for arg in "$@"; do
-  if [[ "$previous" == --output-last-message ]]; then
-    response="$arg"
-  fi
-  previous="$arg"
-done
-
 count=0
 if [[ -f "$FAKE_AGENT_COUNT" ]]; then
   read -r count < "$FAKE_AGENT_COUNT"
@@ -79,17 +70,15 @@ cat > "$FAKE_AGENT_PROMPTS/$count"
 
 case "$count" in
   1)
-    printf '%s\n' '{"kind":"shell","answer":"","command":"cd \"$HARNESH_E2E_ROOT\" && export HARNESH_E2E_VALUE=shared && HARNESH_E2E_LOCAL=local && alias harnesh_alias=\u0027printf alias-ok\\n\u0027 && printf \u0027action-one:%s\\n\u0027 \"$PWD\""}' > "$response"
+    printf '%s\n' '{"harness":"pi","session_id":"pi:harnesh-e2e-session","kind":"shell","answer":"","command":"cd \"$HARNESH_E2E_ROOT\" && export HARNESH_E2E_VALUE=shared && HARNESH_E2E_LOCAL=local && alias harnesh_alias=\u0027printf alias-ok\\n\u0027 && printf \u0027action-one:%s\\n\u0027 \"$PWD\""}'
     ;;
   2)
-    printf '%s\n' '{"kind":"shell","answer":"","command":"harnesh_alias; printf \u0027value:%s:%s\\n\u0027 \"$HARNESH_E2E_VALUE\" \"$HARNESH_E2E_LOCAL\"; false"}' > "$response"
+    printf '%s\n' '{"harness":"pi","session_id":"pi:harnesh-e2e-session","kind":"shell","answer":"","command":"harnesh_alias; printf \u0027value:%s:%s\\n\u0027 \"$HARNESH_E2E_VALUE\" \"$HARNESH_E2E_LOCAL\"; false"}'
     ;;
   *)
-    printf '%s\n' '{"kind":"answer","answer":"fake agent complete","command":""}' > "$response"
+    printf '%s\n' '{"harness":"pi","session_id":"pi:harnesh-e2e-session","kind":"answer","answer":"fake agent complete","command":""}'
     ;;
 esac
-printf '%s\n' '{"type":"thread.started","thread_id":"harnesh-e2e-thread"}'
-printf '%s\n' '{"type":"turn.completed"}'
 EOF
 chmod 0755 "$fake_agent"
 
@@ -135,8 +124,14 @@ if grep -Fq "command: printf 'direct-history" "$temporary/prompts/5"; then
   exit 1
 fi
 
-grep -Fxq resume "$temporary/args.2"
-grep -Fxq harnesh-e2e-thread "$temporary/args.2"
+grep -Fxq -- --here "$temporary/args.1"
+grep -Fxq -- --harnesh-turn "$temporary/args.1"
+if grep -Eq '^(codex|pi|claude)$' "$temporary/args.1"; then
+  echo 'e2e: Harnesh selected a harness instead of delegating selection to agent' >&2
+  exit 1
+fi
+grep -Fxq -- --session "$temporary/args.2"
+grep -Fxq pi:harnesh-e2e-session "$temporary/args.2"
 
 session_id="$(find "$temporary/state/harnesh/sessions" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')"
 jq -e 'select(.command == "please demonstrate shared state" and .origin == "prompt")' \

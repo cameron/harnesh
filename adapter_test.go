@@ -22,40 +22,29 @@ func writeBashTestScript(t *testing.T, path, body string) {
 	}
 }
 
-func TestCodexAdapterStartsAndResumesNativeThread(t *testing.T) {
+func TestAgentBridgeStartsAndResumesSelectedHarness(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "agent.log")
 	promptPath := filepath.Join(dir, "prompt.log")
 	fakeAgent := filepath.Join(dir, "agent")
-	script := `set -euo pipefail
-response=
-previous=
-for arg in "$@"; do
-  if [[ "$previous" == --output-last-message ]]; then response="$arg"; fi
-  previous="$arg"
-done
+	writeBashTestScript(t, fakeAgent, `set -euo pipefail
 printf 'cwd=%s\n' "$PWD" >> "$FAKE_AGENT_LOG"
 printf 'arg=%s\n' "$@" >> "$FAKE_AGENT_LOG"
 cat > "$FAKE_AGENT_PROMPT"
-printf '%s\n' '{"kind":"answer","answer":"adapter ok","command":""}' > "$response"
-printf '%s\n' '{"type":"thread.started","thread_id":"thread-123"}'
-printf '%s\n' '{"type":"turn.completed"}'
-`
-	writeBashTestScript(t, fakeAgent, script)
+printf '%s\n' "$FAKE_AGENT_RESPONSE"
+`)
 	t.Setenv("HARNESH_AGENT_BIN", fakeAgent)
 	t.Setenv("FAKE_AGENT_LOG", logPath)
 	t.Setenv("FAKE_AGENT_PROMPT", promptPath)
-	adapter, err := newCodexAdapter(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("FAKE_AGENT_RESPONSE", `{"harness":"pi","session_id":"pi:session-123","kind":"answer","answer":"adapter ok","command":""}`)
+	adapter := newAgentBridge()
 	adapter.progress = &bytes.Buffer{}
 
 	reply, err := adapter.Run(context.Background(), agentTurn{CWD: dir, Prompt: "first prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.ThreadID != "thread-123" || reply.Answer != "adapter ok" || reply.Action != nil {
+	if reply.ThreadID != "pi:session-123" || reply.Answer != "adapter ok" || reply.Action != nil {
 		t.Fatalf("unexpected start reply: %#v", reply)
 	}
 	prompt, err := os.ReadFile(promptPath)
@@ -69,111 +58,115 @@ printf '%s\n' '{"type":"turn.completed"}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{
-		"cwd=" + dir,
-		"arg=--here",
-		"arg=codex",
-		"arg=exec",
-		"arg=--json",
-		"arg=--output-schema",
-		"arg=--output-last-message",
-		"arg=-",
-	} {
+	for _, required := range []string{"cwd=" + dir, "arg=--here", "arg=--harnesh-turn"} {
 		if !strings.Contains(string(log), required) {
 			t.Fatalf("start log lacks %q:\n%s", required, log)
 		}
 	}
-	if strings.Contains(string(log), "arg=resume") {
-		t.Fatalf("new thread unexpectedly resumed:\n%s", log)
+	for _, forbidden := range []string{"arg=--session", "arg=codex", "arg=pi", "arg=claude"} {
+		if strings.Contains(string(log), forbidden) {
+			t.Fatalf("new session log contains %q:\n%s", forbidden, log)
+		}
 	}
 
 	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reply, err = adapter.Run(context.Background(), agentTurn{CWD: dir, ThreadID: "thread-123", Prompt: "second prompt"})
+	reply, err = adapter.Run(context.Background(), agentTurn{CWD: dir, ThreadID: "pi:session-123", Prompt: "second prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.ThreadID != "thread-123" || reply.Answer != "adapter ok" {
+	if reply.ThreadID != "pi:session-123" || reply.Answer != "adapter ok" {
 		t.Fatalf("unexpected resume reply: %#v", reply)
 	}
-	log, _ = os.ReadFile(logPath)
-	resumeArgs := string(log)
-	if !strings.Contains(resumeArgs, "arg=resume") || !strings.Contains(resumeArgs, "arg=thread-123") {
-		t.Fatalf("resume arguments missing:\n%s", resumeArgs)
+	log, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"arg=--session", "arg=pi:session-123"} {
+		if !strings.Contains(string(log), required) {
+			t.Fatalf("resume log lacks %q:\n%s", required, log)
+		}
 	}
 }
 
-func TestCodexAdapterReturnsShellAction(t *testing.T) {
+func TestAgentBridgeReturnsShellAction(t *testing.T) {
 	dir := t.TempDir()
 	fakeAgent := filepath.Join(dir, "agent")
-	script := `set -euo pipefail
-previous=
-for arg in "$@"; do
-  if [[ "$previous" == --output-last-message ]]; then response="$arg"; fi
-  previous="$arg"
-done
-printf '%s\n' '{"kind":"shell","answer":"","command":"cd /tmp && pwd"}' > "$response"
-printf '%s\n' '{"type":"thread.started","thread_id":"thread-action"}'
-`
-	writeBashTestScript(t, fakeAgent, script)
+	writeBashTestScript(t, fakeAgent, `set -euo pipefail
+cat >/dev/null
+printf '%s\n' '{"harness":"codex","session_id":"codex:thread-action","kind":"shell","answer":"","command":"cd /tmp && pwd"}'
+`)
 	t.Setenv("HARNESH_AGENT_BIN", fakeAgent)
-	adapter, err := newCodexAdapter(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	adapter := newAgentBridge()
 	adapter.progress = &bytes.Buffer{}
 	reply, err := adapter.Run(context.Background(), agentTurn{CWD: dir, Prompt: "change directory"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply.Action == nil || reply.Action.Command != "cd /tmp && pwd" || !validID(reply.Action.ID) {
+	if reply.ThreadID != "codex:thread-action" || reply.Action == nil || reply.Action.Command != "cd /tmp && pwd" || !validID(reply.Action.ID) {
 		t.Fatalf("unexpected action reply: %#v", reply)
 	}
 }
 
-func TestCodexAdapterReportsFailedOrMismatchedResume(t *testing.T) {
-	dir := t.TempDir()
-	fakeAgent := filepath.Join(dir, "agent")
-	script := `set -euo pipefail
-printf '%s\n' '{"type":"thread.started","thread_id":"different-thread"}'
-sleep 30
-`
-	writeBashTestScript(t, fakeAgent, script)
-	t.Setenv("HARNESH_AGENT_BIN", fakeAgent)
-	adapter, err := newCodexAdapter(dir)
-	if err != nil {
-		t.Fatal(err)
+func TestAgentBridgeRejectsInvalidResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+		resume   string
+		want     string
+	}{
+		{
+			name:     "mismatched resume",
+			response: `{"harness":"codex","session_id":"codex:different","kind":"answer","answer":"wrong","command":""}`,
+			resume:   "pi:expected",
+			want:     "instead of pi:expected",
+		},
+		{
+			name:     "invalid native session",
+			response: `{"harness":"pi","session_id":"pi:not/valid","kind":"answer","answer":"wrong","command":""}`,
+			want:     "invalid session ID",
+		},
+		{
+			name:     "multiple objects",
+			response: "{\"harness\":\"claude\",\"session_id\":\"claude:first\",\"kind\":\"answer\",\"answer\":\"one\",\"command\":\"\"}\n{\"extra\":true}",
+			want:     "more than one JSON response",
+		},
 	}
-	adapter.progress = &bytes.Buffer{}
-	_, err = adapter.Run(context.Background(), agentTurn{CWD: dir, ThreadID: "missing-thread", Prompt: "resume"})
-	if err == nil || !strings.Contains(err.Error(), "unexpected thread") {
-		t.Fatalf("mismatched resume error = %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fakeAgent := filepath.Join(dir, "agent")
+			writeBashTestScript(t, fakeAgent, `set -euo pipefail
+cat >/dev/null
+printf '%s\n' "$FAKE_AGENT_RESPONSE"
+`)
+			t.Setenv("HARNESH_AGENT_BIN", fakeAgent)
+			t.Setenv("FAKE_AGENT_RESPONSE", test.response)
+			adapter := newAgentBridge()
+			adapter.progress = &bytes.Buffer{}
+			_, err := adapter.Run(context.Background(), agentTurn{CWD: dir, ThreadID: test.resume, Prompt: "prompt"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v; want text %q", err, test.want)
+			}
+		})
 	}
 }
 
-func TestCodexAdapterRequiresThreadStartedEvent(t *testing.T) {
+func TestAgentBridgeReportsCommandFailure(t *testing.T) {
 	dir := t.TempDir()
 	fakeAgent := filepath.Join(dir, "agent")
-	script := `set -euo pipefail
-previous=
-for arg in "$@"; do
-  if [[ "$previous" == --output-last-message ]]; then response="$arg"; fi
-  previous="$arg"
-done
-printf '%s\n' '{"kind":"answer","answer":"orphaned","command":""}' > "$response"
-printf '%s\n' '{"type":"turn.completed"}'
-`
-	writeBashTestScript(t, fakeAgent, script)
+	writeBashTestScript(t, fakeAgent, `set -euo pipefail
+cat >/dev/null
+printf '%s\n' 'bridge failure detail'
+exit 9
+`)
 	t.Setenv("HARNESH_AGENT_BIN", fakeAgent)
-	adapter, err := newCodexAdapter(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	adapter := newAgentBridge()
 	adapter.progress = &bytes.Buffer{}
-	_, err = adapter.Run(context.Background(), agentTurn{CWD: dir, ThreadID: "missing-native-thread", Prompt: "resume"})
-	if err == nil || !strings.Contains(err.Error(), "thread.started") {
-		t.Fatalf("missing native thread event error = %v", err)
+	_, err := adapter.Run(context.Background(), agentTurn{CWD: dir, Prompt: "prompt"})
+	if err == nil || !strings.Contains(err.Error(), "bridge failure detail") {
+		t.Fatalf("command failure error = %v", err)
 	}
 }
 
@@ -183,6 +176,7 @@ func TestInitialAgentPromptSeparatesShellContextFromRequest(t *testing.T) {
 		"live PTY-backed shell",
 		"built-in shell tools",
 		"return kind \"shell\"",
+		"native agent session",
 		"<shell-event>false</shell-event>",
 		"<user-request>\nwhy did that fail?",
 	} {

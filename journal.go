@@ -320,6 +320,24 @@ func (j *journal) updateAdapter(name, threadID string, cursor int64) error {
 	return j.saveMetaLocked()
 }
 
+func (j *journal) migrateLegacyCodexAdapter() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if _, exists := j.meta.Adapters["agent"]; exists {
+		return nil
+	}
+	legacy, exists := j.meta.Adapters["codex"]
+	if !exists {
+		return nil
+	}
+	if legacy.ThreadID != "" {
+		legacy.ThreadID = "codex:" + legacy.ThreadID
+	}
+	j.meta.Adapters["agent"] = legacy
+	j.meta.UpdatedAt = time.Now().UTC()
+	return j.saveMetaLocked()
+}
+
 func (j *journal) begin(marker shellMarker) error {
 	if !validID(marker.ID) || marker.Command == "" {
 		return fmt.Errorf("invalid shell event start")

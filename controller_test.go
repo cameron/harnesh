@@ -17,7 +17,7 @@ type scriptedAdapter struct {
 	turns   []agentTurn
 }
 
-func (a *scriptedAdapter) Name() string { return "codex" }
+func (a *scriptedAdapter) Name() string { return "agent" }
 
 func (a *scriptedAdapter) Run(_ context.Context, turn agentTurn) (agentReply, error) {
 	a.mu.Lock()
@@ -43,8 +43,8 @@ func (a *scriptedAdapter) recordedTurns() []agentTurn {
 func TestControllerContinuesSameThreadAfterSharedShellAction(t *testing.T) {
 	j := testJournal(t)
 	adapter := &scriptedAdapter{replies: []agentReply{
-		{ThreadID: "native-thread", Action: &sharedAction{ID: "agent-action", Command: "cd /tmp && printf 'shared output\\n'"}},
-		{ThreadID: "native-thread", Answer: "The live shell is now in /tmp."},
+		{ThreadID: "pi:native-session", Action: &sharedAction{ID: "agent-action", Command: "cd /tmp && printf 'shared output\\n'"}},
+		{ThreadID: "pi:native-session", Answer: "The live shell is now in /tmp."},
 	}}
 	var output bytes.Buffer
 	controller := newAgentController(adapter, j, &output)
@@ -61,7 +61,7 @@ func TestControllerContinuesSameThreadAfterSharedShellAction(t *testing.T) {
 		t.Fatalf("answer was not displayed: %q", output.String())
 	}
 	turns := adapter.recordedTurns()
-	if len(turns) != 2 || turns[0].ThreadID != "" || turns[1].ThreadID != "native-thread" {
+	if len(turns) != 2 || turns[0].ThreadID != "" || turns[1].ThreadID != "pi:native-session" {
 		t.Fatalf("thread continuity failed: %#v", turns)
 	}
 	for _, required := range []string{"shared output", "exit_code: 0", "cd /tmp"} {
@@ -75,8 +75,8 @@ func TestControllerDeliversDirectShellEventsOnceAfterSuccessfulTurn(t *testing.T
 	j := testJournal(t)
 	recordTestEvent(t, j, "direct-export", "user", "export PROJECT=demo", "/tmp", 0, nil)
 	adapter := &scriptedAdapter{replies: []agentReply{
-		{ThreadID: "thread", Answer: "first"},
-		{ThreadID: "thread", Answer: "second"},
+		{ThreadID: "codex:thread", Answer: "first"},
+		{ThreadID: "codex:thread", Answer: "second"},
 	}}
 	controller := newAgentController(adapter, j, &bytes.Buffer{})
 	first := controller.handle(context.Background(), promptRequest{Type: "prompt", Prompt: "first question", CWD: "/tmp"})
@@ -91,8 +91,8 @@ func TestControllerDeliversDirectShellEventsOnceAfterSuccessfulTurn(t *testing.T
 	if strings.Contains(turns[1].Prompt, "export PROJECT=demo") {
 		t.Fatalf("direct event was delivered twice:\n%s", turns[1].Prompt)
 	}
-	if j.adapter("codex").Cursor != 1 {
-		t.Fatalf("Codex cursor = %d", j.adapter("codex").Cursor)
+	if j.adapter("agent").Cursor != 1 {
+		t.Fatalf("agent cursor = %d", j.adapter("agent").Cursor)
 	}
 }
 
@@ -102,16 +102,16 @@ func TestControllerDoesNotAdvanceCursorAfterAgentFailure(t *testing.T) {
 	adapter := &scriptedAdapter{err: errors.New("native thread is missing")}
 	controller := newAgentController(adapter, j, &bytes.Buffer{})
 	response := controller.handle(context.Background(), promptRequest{Type: "prompt", Prompt: "explain", CWD: "/tmp"})
-	if response.Error == "" || j.adapter("codex").Cursor != 0 || controller.active() {
-		t.Fatalf("failure state = response %#v cursor %d active %v", response, j.adapter("codex").Cursor, controller.active())
+	if response.Error == "" || j.adapter("agent").Cursor != 0 || controller.active() {
+		t.Fatalf("failure state = response %#v cursor %d active %v", response, j.adapter("agent").Cursor, controller.active())
 	}
 }
 
 func TestControllerEnforcesSharedActionLimit(t *testing.T) {
 	j := testJournal(t)
 	adapter := &scriptedAdapter{replies: []agentReply{
-		{ThreadID: "thread", Action: &sharedAction{ID: "action-one", Command: "pwd"}},
-		{ThreadID: "thread", Action: &sharedAction{ID: "action-two", Command: "pwd"}},
+		{ThreadID: "claude:thread", Action: &sharedAction{ID: "action-one", Command: "pwd"}},
+		{ThreadID: "claude:thread", Action: &sharedAction{ID: "action-two", Command: "pwd"}},
 	}}
 	controller := newAgentController(adapter, j, &bytes.Buffer{})
 	controller.limit = 1
@@ -127,7 +127,7 @@ type blockingAdapter struct {
 	started chan struct{}
 }
 
-func (a *blockingAdapter) Name() string { return "codex" }
+func (a *blockingAdapter) Name() string { return "agent" }
 
 func (a *blockingAdapter) Run(ctx context.Context, _ agentTurn) (agentReply, error) {
 	close(a.started)

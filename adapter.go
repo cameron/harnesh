@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -37,78 +36,37 @@ type agentAdapter interface {
 	Run(context.Context, agentTurn) (agentReply, error)
 }
 
-type codexAdapter struct {
+type agentBridge struct {
 	bin      string
-	stateDir string
 	progress io.Writer
 }
 
-type codexStructuredReply struct {
-	Kind    string `json:"kind"`
-	Answer  string `json:"answer"`
-	Command string `json:"command"`
+type bridgeResponse struct {
+	Harness   string `json:"harness"`
+	SessionID string `json:"session_id"`
+	Kind      string `json:"kind"`
+	Answer    string `json:"answer"`
+	Command   string `json:"command"`
 }
 
-const codexOutputSchema = `{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "kind": { "type": "string", "enum": ["answer", "shell"] },
-    "answer": { "type": "string" },
-    "command": { "type": "string" }
-  },
-  "required": ["kind", "answer", "command"],
-  "additionalProperties": false
-}`
-
-func newCodexAdapter(stateDir string) (*codexAdapter, error) {
+func newAgentBridge() *agentBridge {
 	bin := os.Getenv("HARNESH_AGENT_BIN")
 	if bin == "" {
 		bin = "agent"
 	}
-	schemaPath := filepath.Join(stateDir, "codex-output-schema.json")
-	if err := writePrivateFile(schemaPath, []byte(codexOutputSchema+"\n")); err != nil {
-		return nil, err
-	}
-	return &codexAdapter{bin: bin, stateDir: stateDir, progress: os.Stderr}, nil
+	return &agentBridge{bin: bin, progress: os.Stderr}
 }
 
-func (a *codexAdapter) Name() string { return "codex" }
+func (a *agentBridge) Name() string { return "agent" }
 
-func (a *codexAdapter) Run(ctx context.Context, turn agentTurn) (agentReply, error) {
+func (a *agentBridge) Run(ctx context.Context, turn agentTurn) (agentReply, error) {
 	if turn.CWD == "" || turn.Prompt == "" {
-		return agentReply{}, errors.New("Codex turn requires cwd and prompt")
+		return agentReply{}, errors.New("agent turn requires cwd and prompt")
 	}
-	responseFile, err := os.CreateTemp(a.stateDir, ".codex-response-*")
-	if err != nil {
-		return agentReply{}, err
-	}
-	responsePath := responseFile.Name()
-	if err := responseFile.Chmod(0o600); err != nil {
-		_ = responseFile.Close()
-		return agentReply{}, err
-	}
-	if err := responseFile.Close(); err != nil {
-		return agentReply{}, err
-	}
-	defer os.Remove(responsePath)
-
-	schemaPath := filepath.Join(a.stateDir, "codex-output-schema.json")
-	args := []string{"--here", "codex", "exec"}
+	args := []string{"--here", "--harnesh-turn"}
 	if turn.ThreadID != "" {
-		args = append(args, "resume")
+		args = append(args, "--session", turn.ThreadID)
 	}
-	args = append(args,
-		"--json",
-		"--skip-git-repo-check",
-		"--output-schema", schemaPath,
-		"--output-last-message", responsePath,
-	)
-	if turn.ThreadID != "" {
-		args = append(args, turn.ThreadID)
-	}
-	args = append(args, "-")
-
 	cmd := exec.CommandContext(ctx, a.bin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -125,81 +83,69 @@ func (a *codexAdapter) Run(ctx context.Context, turn agentTurn) (agentReply, err
 	cmd.Dir = turn.CWD
 	cmd.Stdin = strings.NewReader(turn.Prompt)
 	cmd.Stderr = a.progress
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return agentReply{}, err
-	}
-	if err := cmd.Start(); err != nil {
-		return agentReply{}, fmt.Errorf("start %s: %w", a.bin, err)
-	}
-
-	threadID := turn.ThreadID
-	sawThreadStarted := false
-	var streamLines []string
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 4096), 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		streamLines = append(streamLines, line)
-		var event struct {
-			Type     string `json:"type"`
-			ThreadID string `json:"thread_id"`
-		}
-		if json.Unmarshal([]byte(line), &event) == nil && event.Type == "thread.started" && event.ThreadID != "" {
-			sawThreadStarted = true
-			if threadID != "" && threadID != event.ThreadID {
-				_ = cmd.Cancel()
-				_ = cmd.Wait()
-				return agentReply{}, fmt.Errorf("Codex resumed unexpected thread %s instead of %s", event.ThreadID, threadID)
-			}
-			threadID = event.ThreadID
-		}
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		_ = cmd.Cancel()
-		_ = cmd.Wait()
-		return agentReply{}, fmt.Errorf("read Codex JSON stream: %w", scanErr)
-	}
-	if err := cmd.Wait(); err != nil {
-		detail := strings.Join(streamLines, "\n")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stdout.String())
 		if len(detail) > 4096 {
 			detail = detail[len(detail)-4096:]
 		}
 		if detail != "" {
-			return agentReply{}, fmt.Errorf("Codex turn failed: %w: %s", err, detail)
+			return agentReply{}, fmt.Errorf("agent turn failed: %w: %s", err, detail)
 		}
-		return agentReply{}, fmt.Errorf("Codex turn failed: %w", err)
+		return agentReply{}, fmt.Errorf("agent turn failed: %w", err)
 	}
-	if !sawThreadStarted || threadID == "" {
-		return agentReply{}, errors.New("Codex JSON stream did not include thread.started")
+
+	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
+	var response bridgeResponse
+	if err := decoder.Decode(&response); err != nil {
+		return agentReply{}, fmt.Errorf("decode agent bridge response: %w", err)
 	}
-	data, err := os.ReadFile(responsePath)
-	if err != nil {
-		return agentReply{}, fmt.Errorf("read Codex final response: %w", err)
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return agentReply{}, errors.New("agent bridge returned more than one JSON response")
 	}
-	var structured codexStructuredReply
-	if err := json.Unmarshal(data, &structured); err != nil {
-		return agentReply{}, fmt.Errorf("decode Codex structured response: %w", err)
+	response.Answer = strings.TrimSpace(response.Answer)
+	response.Command = strings.TrimSpace(response.Command)
+	if !validAgentSessionID(response.SessionID, response.Harness) {
+		return agentReply{}, errors.New("agent bridge returned an invalid session ID")
 	}
-	structured.Answer = strings.TrimSpace(structured.Answer)
-	structured.Command = strings.TrimSpace(structured.Command)
-	switch structured.Kind {
+	if turn.ThreadID != "" && response.SessionID != turn.ThreadID {
+		return agentReply{}, fmt.Errorf("agent resumed %s instead of %s", response.SessionID, turn.ThreadID)
+	}
+	switch response.Kind {
 	case "answer":
-		if structured.Answer == "" || structured.Command != "" {
-			return agentReply{}, errors.New("Codex returned an invalid answer response")
+		if response.Answer == "" || response.Command != "" {
+			return agentReply{}, errors.New("agent bridge returned an invalid answer response")
 		}
-		return agentReply{ThreadID: threadID, Answer: structured.Answer}, nil
+		return agentReply{ThreadID: response.SessionID, Answer: response.Answer}, nil
 	case "shell":
-		if structured.Command == "" || structured.Answer != "" {
-			return agentReply{}, errors.New("Codex returned an invalid shell response")
+		if response.Command == "" || response.Answer != "" {
+			return agentReply{}, errors.New("agent bridge returned an invalid shell response")
 		}
 		actionID, err := newID("agent-")
 		if err != nil {
 			return agentReply{}, err
 		}
-		return agentReply{ThreadID: threadID, Action: &sharedAction{ID: actionID, Command: structured.Command}}, nil
+		return agentReply{
+			ThreadID: response.SessionID,
+			Action:   &sharedAction{ID: actionID, Command: response.Command},
+		}, nil
 	default:
-		return agentReply{}, fmt.Errorf("Codex returned unknown response kind %q", structured.Kind)
+		return agentReply{}, fmt.Errorf("agent bridge returned unknown response kind %q", response.Kind)
+	}
+}
+
+func validAgentSessionID(sessionID, harness string) bool {
+	selected, native, ok := strings.Cut(sessionID, ":")
+	if !ok || selected != harness || !validID(native) {
+		return false
+	}
+	switch selected {
+	case "codex", "claude", "pi":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -207,9 +153,9 @@ func initialAgentPrompt(userPrompt, contextText string) string {
 	var prompt strings.Builder
 	prompt.WriteString(`You are running as the agent inside Harnesh, a persistent interactive shell.
 
-Harnesh and the user share one live PTY-backed shell. Your built-in shell tools are available for isolated repository work and background processing. Do not use them for work that must observe or change the live shell's cwd, exported or shell-local variables, aliases, functions, jobs, history, terminal state, or visible foreground interaction. For that work, return kind "shell" with exactly one command. Harnesh will run it visibly in the live shell and resume this same thread with its result.
+Harnesh and the user share one live PTY-backed shell. Your built-in shell tools are available for isolated repository work and background processing. Do not use them for work that must observe or change the live shell's cwd, exported or shell-local variables, aliases, functions, jobs, history, terminal state, or visible foreground interaction. For that work, return kind "shell" with exactly one command. Harnesh will run it visibly in the live shell and resume this same native agent session with its result.
 
-Return kind "answer" when no live-shell command is needed. Put the user-facing response in answer and leave command empty. For kind "shell", put the command in command and leave answer empty. Do not claim a shared-shell command ran until Harnesh returns its result.`)
+Return kind "answer" when no live-shell command is needed. Put the user-facing response in answer and leave command empty. For kind "shell", put the command in command and leave answer empty. Do not claim a shared-shell command ran until Harnesh returns its result. Return only the JSON object with the kind, answer, and command fields.`)
 	if contextText != "" {
 		prompt.WriteString("\n\n")
 		prompt.WriteString(contextText)

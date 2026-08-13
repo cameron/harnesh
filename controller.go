@@ -148,7 +148,7 @@ func (c *agentController) handleResult(ctx context.Context, request promptReques
 	}
 	state := c.journal.adapter(c.adapter.Name())
 	if state.ThreadID == "" {
-		return c.fail(errors.New("Codex thread ID is missing from the active Harnesh session"))
+		return c.fail(errors.New("agent session ID is missing from the active Harnesh session"))
 	}
 	reply, err := c.runTurn(ctx, agentTurn{CWD: c.journal.lastCWD(), ThreadID: state.ThreadID, Prompt: resultText})
 	if err != nil {

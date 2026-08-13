@@ -105,7 +105,7 @@ func TestJournalBatchesDirectEventsExactlyOncePerAdapter(t *testing.T) {
 	recordTestEvent(t, j, "agent-one", "agent", "pwd", "/tmp", 0, []byte("/tmp\n"))
 	recordTestEvent(t, j, "prompt-one", "prompt", "why?", "/tmp", 127, nil)
 
-	batch, err := j.buildBatch("codex")
+	batch, err := j.buildBatch("agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,10 +115,10 @@ func TestJournalBatchesDirectEventsExactlyOncePerAdapter(t *testing.T) {
 	if batch.ID == "" || batch.Through != 3 {
 		t.Fatalf("unexpected batch metadata: %#v", batch)
 	}
-	if err := j.updateAdapter("codex", "thread", batch.Through); err != nil {
+	if err := j.updateAdapter("agent", "pi:thread", batch.Through); err != nil {
 		t.Fatal(err)
 	}
-	again, err := j.buildBatch("codex")
+	again, err := j.buildBatch("agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,17 +134,53 @@ func TestJournalBatchesDirectEventsExactlyOncePerAdapter(t *testing.T) {
 	}
 }
 
+func TestJournalMigratesLegacyCodexSessionToAgentBridge(t *testing.T) {
+	j := testJournal(t)
+	recordTestEvent(t, j, "legacy-event", "user", "pwd", "/tmp", 0, []byte("/tmp\n"))
+	j.meta.Adapters["codex"] = adapterState{ThreadID: "legacy-thread", Cursor: 1}
+	if err := j.saveMetaLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.migrateLegacyCodexAdapter(); err != nil {
+		t.Fatal(err)
+	}
+	state := j.adapter("agent")
+	if state.ThreadID != "codex:legacy-thread" || state.Cursor != 1 {
+		t.Fatalf("migrated adapter state = %#v", state)
+	}
+	reopened, err := openSession(j.sessionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.adapter("agent") != state {
+		t.Fatalf("persisted adapter state = %#v", reopened.adapter("agent"))
+	}
+}
+
+func TestJournalMigrationPreservesExistingAgentSession(t *testing.T) {
+	j := testJournal(t)
+	j.meta.Adapters["codex"] = adapterState{ThreadID: "legacy-thread", Cursor: 2}
+	j.meta.Adapters["agent"] = adapterState{ThreadID: "pi:active-session", Cursor: 5}
+	if err := j.migrateLegacyCodexAdapter(); err != nil {
+		t.Fatal(err)
+	}
+	state := j.adapter("agent")
+	if state.ThreadID != "pi:active-session" || state.Cursor != 5 {
+		t.Fatalf("existing agent state changed: %#v", state)
+	}
+}
+
 func TestJournalBatchStopsBeforeLimitAndKeepsStableID(t *testing.T) {
 	j := testJournal(t)
 	output := bytes.Repeat([]byte("x"), outputHeadLimit+outputTailLimit)
 	for index := 0; index < 6; index++ {
 		recordTestEvent(t, j, "batch-"+string(rune('a'+index)), "user", "command", "/tmp", 0, output)
 	}
-	first, err := j.buildBatch("codex")
+	first, err := j.buildBatch("agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := j.buildBatch("codex")
+	second, err := j.buildBatch("agent")
 	if err != nil {
 		t.Fatal(err)
 	}

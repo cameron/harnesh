@@ -1,6 +1,6 @@
 # Hybrid Agent-Shell Harness — Original Design Exploration
 
-> Status: historical design notes. The current Codex-backed interface is in
+> Status: historical design notes. The current agent-backed interface is in
 > `README.md`. It intentionally uses explicit comma and command-not-found prompt
 > routing instead of the general classifier described below.
 

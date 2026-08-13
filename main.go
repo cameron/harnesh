@@ -80,11 +80,11 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "harnesh: %v\n", err)
 		return 1
 	}
-	adapter, err := newCodexAdapter(j.dir)
-	if err != nil {
+	if err := j.migrateLegacyCodexAdapter(); err != nil {
 		fmt.Fprintf(os.Stderr, "harnesh: %v\n", err)
 		return 1
 	}
+	adapter := newAgentBridge()
 	controller := newAgentController(adapter, j, os.Stdout)
 	fmt.Fprintf(os.Stderr, "harnesh: session %s\n", j.sessionID())
 	if err := runShell(j, controller, cwd); err != nil {
@@ -117,8 +117,14 @@ func runSessions(args []string) int {
 		return 1
 	}
 	for _, session := range sessions {
-		threadID := session.Adapters["codex"].ThreadID
-		fmt.Printf("%s\t%s\t%s\t%s\n", session.ID, session.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"), threadID, session.LastCWD)
+		sessionID := session.Adapters["agent"].ThreadID
+		if sessionID == "" {
+			sessionID = session.Adapters["codex"].ThreadID
+			if sessionID != "" {
+				sessionID = "codex:" + sessionID
+			}
+		}
+		fmt.Printf("%s\t%s\t%s\t%s\n", session.ID, session.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"), sessionID, session.LastCWD)
 	}
 	return 0
 }
@@ -229,7 +235,7 @@ func printUsage(output *os.File) {
   %s history tail [COUNT] [--session SESSION_ID]
   %s history output EVENT_ID [--session SESSION_ID]
 
-Start a persistent shell that dispatches prose prompts through agent and Codex.
+Start a persistent shell that dispatches prose prompts through agent.
 Use ", PROMPT" to force an agent prompt. Unknown commands retain the existing
 command-not-found prompt path.
 `, name, name, name, name, name)
