@@ -1,8 +1,8 @@
-# Hybrid Agent-Shell Harness — Implementation Spec (Rough Draft Target)
+# Hybrid Agent-Shell Harness — Original Design Exploration
 
-> Status: design spec for a first rough-draft implementation. Working name TBD.
-> Audience: an implementing agent. Make reasonable choices where unspecified and
-> note them; the rationale sections exist so you pick consistently with intent.
+> Status: historical design notes. The current Codex-backed interface is in
+> `README.md`. It intentionally uses explicit comma and command-not-found prompt
+> routing instead of the general classifier described below.
 
 ## 1. Concept
 
